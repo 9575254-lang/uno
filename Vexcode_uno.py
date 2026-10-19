@@ -1,3 +1,46 @@
+#region VEXcode Generated Robot Configuration
+from vex import *
+import urandom
+import math
+
+# Brain should be defined by default
+brain = Brain()
+
+# Robot configuration code
+brain_inertial = Inertial()
+motor_1 = Motor(Ports.PORT1, False)
+motor_5 = Motor(Ports.PORT5, False)
+
+
+# Wait for sensor(s) to fully initialize
+wait(100, MSEC)
+
+# generating and setting random seed
+def initializeRandomSeed():
+    wait(100, MSEC)
+    xaxis = brain_inertial.acceleration(XAXIS) * 1000
+    yaxis = brain_inertial.acceleration(YAXIS) * 1000
+    zaxis = brain_inertial.acceleration(ZAXIS) * 1000
+    systemTime = brain.timer.system() * 100
+    urandom.seed(int(xaxis + yaxis + zaxis + systemTime)) 
+
+# Initialize random seed 
+initializeRandomSeed()
+
+#endregion VEXcode Generated Robot Configuration
+# ------------------------------------------
+# 
+# 	Project:      VEXcode Project
+#	Author:       VEX
+#	Created:
+#	Description:  VEXcode EXP Python Project
+# 
+# ------------------------------------------
+
+# Library imports
+from vex import *
+
+# Begin project code
 import random
 import time
 from vex import *
@@ -17,7 +60,7 @@ def motor1_move_forward():
     motor_1.spin_for(FORWARD, 360, DEGREES)
 
 def motor5_move_forward():
-    motor_5.spin_for(REVERSE, 360, DEGREES)
+    motor_5.spin_for(FORWARD, 360, DEGREES)
 
 def motor1_turn_right():
     motor_1.spin_for(FORWARD, 220, DEGREES)
@@ -285,10 +328,8 @@ def drive_to_center():
     print_screen_line(2, "DRIVING TO")
     print_screen_line(3, "CENTER PILE...")
     FWD.broadcast_and_wait()
-    LT.broadcast_and_wait()
     FWD.broadcast_and_wait()
-    RT.broadcast_and_wait()
-    FWD.broadcast_and_wait()
+    
 
 def drive_back_to_player():
     brain.screen.clear_screen()
@@ -297,12 +338,10 @@ def drive_back_to_player():
     LT.broadcast_and_wait()
     LT.broadcast_and_wait()
     FWD.broadcast_and_wait()
-    LT.broadcast_and_wait()
     FWD.broadcast_and_wait()
     RT.broadcast_and_wait()
-    FWD.broadcast_and_wait()
-    LT.broadcast_and_wait()
-    LT.broadcast_and_wait()
+    RT.broadcast_and_wait()
+
 
 # ----------------------------------------------------------------------------
 # DECK MANAGEMENT
@@ -371,28 +410,40 @@ def format_card_short(card):
         return c_code + " " + val
 
 def display_player_hand(hand):
-    brain.screen.clear_screen()
-    print_screen_line(1, "HAND (" + str(len(hand)) + " CARDS)")
-    row = 2
-    card_idx = 1
-    line_str = ""
-    for card in hand:
-        card_str = str(card_idx) + ":" + format_card_short(card) + " "
-        if len(line_str + card_str) > 16:
+    """Displays player hand with pagination so all cards can be viewed."""
+    page = 0
+    cards_per_page = 6
+    total_cards = len(hand)
+    
+    while True:
+        brain.screen.clear_screen()
+        print_screen_line(1, "HAND (" + str(total_cards) + " CARDS)")
+        
+        start_idx = page * cards_per_page
+        end_idx = min(start_idx + cards_per_page, total_cards)
+        
+        row = 2
+        line_str = ""
+        for i in range(start_idx, end_idx):
+            card_str = str(i + 1) + ":" + format_card_short(hand[i]) + " "
+            if len(line_str + card_str) > 16:
+                print_screen_line(row, line_str)
+                row += 1
+                line_str = card_str
+            else:
+                line_str += card_str
+        if line_str:
             print_screen_line(row, line_str)
-            row += 1
-            line_str = card_str
-            if row > 4:
-                break
-        else:
-            line_str += card_str
-        card_idx += 1
-
-    if row <= 4 and len(line_str) > 0:
-        print_screen_line(row, line_str)
-
-    print_screen_line(5, "Press CHECK...")
-    wait_for_button_press()
+            
+        print_screen_line(5, "L/R:Page CHECK:Ok")
+        
+        btn = wait_for_button_press()
+        if btn == "LEFT" and page > 0:
+            page -= 1
+        elif btn == "RIGHT" and (page + 1) * cards_per_page < total_cards:
+            page += 1
+        elif btn == "CHECK":
+            break
 
 # ----------------------------------------------------------------------------
 # MENUS
@@ -509,46 +560,120 @@ def play_or_draw_menu(player_name, hand, top_card):
 # ----------------------------------------------------------------------------
 # MAIN GAME STARTUP
 # ----------------------------------------------------------------------------
+def apply_card_effect(card, forced_draw_count):
+    """Calculates forced draw penalties caused by action and wild cards."""
+    val = card['value']
+    if val == "Draw Two":
+        return forced_draw_count + 2
+    elif val == "Wild Draw Four":
+        return forced_draw_count + 4
+    return forced_draw_count
+
+# ----------------------------------------------------------------------------
+# FORCED DRAW CHECK MENU
+# ----------------------------------------------------------------------------
+def check_forced_draw_menu():
+    """Asks the player if a penalty is active on them this turn."""
+    options = ["NONE", "+2 (Draw Two)", "+4 (Wild Draw Four)"]
+    idx = 0
+    while True:
+        brain.screen.clear_screen()
+        print_screen_line(1, "TURN CHECK")
+        print_screen_line(2, "Forced to draw?")
+        print_screen_line(3, "< " + options[idx] + " >")
+        print_screen_line(5, "L/R:Nav CHECK:Ok")
+
+        btn = wait_for_button_press()
+        if btn == "LEFT":
+            idx = (idx - 1) % len(options)
+        elif btn == "RIGHT":
+            idx = (idx + 1) % len(options)
+        elif btn == "CHECK":
+            if idx == 1:
+                return 2
+            elif idx == 2:
+                return 4
+            return 0
+
+
+# ----------------------------------------------------------------------------
+# MAIN GAME STARTUP
+# ----------------------------------------------------------------------------
 def when_started():
     time.sleep(0.015)
 
+    # --- INITIAL SETUP ---
     deck = build_uno_deck()
     custom_shuffle(deck)
     draw_pile = deck
     discard_pile = []
-   
-    # Initial deal: draw 7 cards showing card back graphics
+
+    # Beginning of game: deal 7 cards
     p1_hand = []
     draw_pile, discard_pile = draw_multiple_cards(7, draw_pile, discard_pile, p1_hand)
 
-    top_card = input_top_card_menu()
-    discard_pile.append(top_card)
+    # Show initial 7-card hand immediately before the loop starts
+    display_player_hand(p1_hand)
 
     game_over = False
+
+    # ------------------------------------------------------------------------
+    # MAIN GAME LOOP
+    # ------------------------------------------------------------------------
     while not game_over:
-        display_player_hand(p1_hand)
-        action, hand_index = play_or_draw_menu("P1", p1_hand, top_card)
-       
-        # Hide hand and show privacy screen while robot travels
-        drive_to_center()
+        # --- STEP 1: Ready prompt to start turn ---
+        brain.screen.clear_screen()
+        print_screen_line(1, "START TURN")
+        print_screen_line(3, "Ready to play?")
+        print_screen_line(5, "Press CHECK...")
+        wait_for_button_press()
 
-        if action == "DRAW":
-            draw_pile, discard_pile = draw_multiple_cards(1, draw_pile, discard_pile, p1_hand)
-        elif action == "PLAY":
-            played_card = p1_hand.pop(hand_index)
-           
-            if played_card['type'] == 'wild':
-                chosen_color = choose_wild_color()
-                played_card['color'] = chosen_color
+        # --- ASK PLAYER IF FORCED TO DRAW CARDS ---
+        forced_draw_count = check_forced_draw_menu()
 
-            discard_pile.append(played_card)
-            top_card = played_card
-            render_uno_card_object(played_card)
-            time.sleep(2)
+        # --- STEP 2: Turn Execution ---
+        if forced_draw_count > 0:
+            # Player is forced to draw +2 or +4 cards
+            brain.screen.clear_screen()
+            print_screen_line(2, "FORCED DRAW!")
+            print_screen_line(3, "Drawing " + str(forced_draw_count) + " cards...")
+            time.sleep(1)
 
-        # Hide screen while returning
-        drive_back_to_player()
+            drive_to_center()
+            draw_pile, discard_pile = draw_multiple_cards(
+                forced_draw_count, draw_pile, discard_pile, p1_hand
+            )
+            drive_back_to_player()
 
+        else:
+            # 1. Ask for top card on discard pile first
+            top_card = input_top_card_menu()
+            discard_pile.append(top_card)
+
+            # 2. Select card to play (or choose DRAW) while still at player
+            action, hand_index = play_or_draw_menu("P1", p1_hand, top_card)
+
+            # 3. Now drive to the center to perform the action
+            drive_to_center()
+
+            if action == "DRAW":
+                draw_pile, discard_pile = draw_multiple_cards(1, draw_pile, discard_pile, p1_hand)
+
+            elif action == "PLAY":
+                played_card = p1_hand.pop(hand_index)
+
+                if played_card['type'] == 'wild':
+                    chosen_color = choose_wild_color()
+                    played_card['color'] = chosen_color
+
+                discard_pile.append(played_card)
+                render_uno_card_object(played_card)
+                time.sleep(2)
+
+            # 4. Drive back to player position
+            drive_back_to_player()
+
+        # --- STEP 3: Check victory condition ---
         if len(p1_hand) == 0:
             game_over = True
             brain.screen.clear_screen()
@@ -556,6 +681,10 @@ def when_started():
             print_screen_line(3, "NO CARDS LEFT")
             print_screen_line(5, "GAME OVER")
             time.sleep(5)
+            break
 
+        # --- STEP 4: Show hand after turn completes ---
+        display_player_hand(p1_hand)
+     
 # Execute program
 when_started()
